@@ -6,7 +6,7 @@ import { basename, join } from "node:path";
 import { test, type TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
 
-const CLI = fileURLToPath(new URL("./pi-subagent.ts", import.meta.url));
+const CLI = fileURLToPath(new URL("../skills/pi-subagent/scripts/pi-subagent.ts", import.meta.url));
 
 function fixture(t: TestContext) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "pi-subagent-test-")));

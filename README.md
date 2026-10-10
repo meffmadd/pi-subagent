@@ -43,8 +43,8 @@ The agent-facing contract — spawn, inspect, follow-ups, guardrails — lives i
 ```bash
 git clone https://github.com/meffmadd/pi-subagent
 cd pi-subagent
-node --test skills/pi-subagent/scripts/pi-subagent.test.ts   # run tests
+npm test                                               # run tests
 npx skills add . -a pi -g                             # install your working copy globally
 ```
 
-Edits in the repo do not propagate to installed copies; re-run `npx skills update` to refresh.
+Edits in the repo do not propagate to installed copies; refresh a local-path install by re-running `npx skills add . -a pi -g` (`npx skills update` cannot refresh local sources).

@@ -1,0 +1,8 @@
+{
+  "name": "pi-subagent",
+  "version": "0.1.0",
+  "description": "Spawn Pi subagents — background child pi processes with a fresh context",
+  "type": "module",
+  "keywords": ["pi-package", "agent-skills"],
+  "files": ["skills/"]
+}

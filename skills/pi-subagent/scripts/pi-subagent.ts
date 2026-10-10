@@ -9,10 +9,12 @@ import {
   existsSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { homedir } from "node:os";
+import { basename, dirname, join, resolve } from "node:path";
 
 type Status = "running" | "settled" | "aborted" | "failed" | "empty";
 
@@ -50,12 +52,20 @@ exists before pi starts and is named by the session id:
     events.jsonl      live JSON event stream from \`pi --mode json\`
     pid               worker process id
     stderr.log        worker stderr
+    spawn.json        project cwd and tools, for resume
 
 The remaining commands take the run directory printed by spawn.
+resume forks a run's persisted session into a fresh run dir beside it and
+continues it in the background, printing the new run dir. The worker keeps the
+session's context, model, and reasoning level (override with --model and
+--thinking); without MSG it is told to resume where it stopped. resume refuses
+while the run's process is alive.
 Pass @path as a task argument to include a task file.
 
 Usage:
   pi-subagent spawn [options] -- TASK   start a background subagent; prints its run dir
+  pi-subagent resume <run-dir> [options] [MSG...]
+                                      continue a run's session in a new background run
   pi-subagent state  <run-dir>           one-line JSON run summary
   pi-subagent steps  <run-dir>           tool calls so far, with duration and status
   pi-subagent text   <run-dir>           latest completed assistant text
@@ -68,6 +78,11 @@ Spawn options:
   --thinking <lvl>  off | minimal | low | medium | high | xhigh | max
   --model <pattern> model pattern or id
 
+Resume options:
+  --tools <list>    tool allowlist (default: the run's spawn.json tools, else read,grep,find,ls)
+  --thinking <lvl>  override the session's reasoning level
+  --model <pattern> override the session's model
+
 Wait options:
   --pid <id>        process id; stop as soon as it is gone (read automatically from a run dir)
   --timeout <s>     give up after <s> seconds (default 600, 0 = wait forever)
@@ -78,7 +93,10 @@ Exit codes: 0 settled · 1 usage · 2 not found/unreadable · 3 wait timeout · 
             the process exited without settling`;
 
 const DEFAULT_BASE = "/tmp/pi-subagents";
+const DEFAULT_TOOLS = "read,grep,find,ls";
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+const DEFAULT_RESUME_MESSAGE =
+  "Your previous run ended before finishing. Resume exactly where you stopped — check the worktree for partial progress, then finish the task.";
 
 function fail(msg: string, code: number): never {
   console.error(`pi-subagent: ${msg}`);
@@ -284,12 +302,27 @@ async function cmdSpawn(flags: Record<string, string>, taskArgs: string[]): Prom
     return fail(`cannot create ${runDir}: ${(err as Error).message}`, 1);
   }
 
-  const piArgs: string[] = ["--mode", "json", "-p", "--session-id", sessionId, "--tools", flags.tools ?? "read,grep,find,ls"];
+  const tools = flags.tools ?? DEFAULT_TOOLS;
+  writeSpawnJson(runDir, process.cwd(), tools);
+
+  const piArgs: string[] = ["--mode", "json", "-p", "--session-id", sessionId, "--tools", tools];
   if (flags.thinking !== undefined) piArgs.push("--thinking", flags.thinking);
   if (flags.model !== undefined) piArgs.push("--model", flags.model);
   if (task.some((t) => t.startsWith("-"))) piArgs.push("--"); // let a task begin with "-"
   piArgs.push(...task);
 
+  await launchWorker(runDir, piArgs, process.cwd());
+}
+
+function writeSpawnJson(runDir: string, cwd: string, tools: string): void {
+  try {
+    writeFileSync(join(runDir, "spawn.json"), `${JSON.stringify({ cwd, tools }, null, 2)}\n`);
+  } catch (err) {
+    fail(`cannot write spawn.json in ${runDir}: ${(err as Error).message}`, 1);
+  }
+}
+
+async function launchWorker(runDir: string, piArgs: string[], cwd: string): Promise<void> {
   const eventsPath = join(runDir, "events.jsonl");
   const stderrPath = join(runDir, "stderr.log");
   let outFd: number;
@@ -302,7 +335,7 @@ async function cmdSpawn(flags: Record<string, string>, taskArgs: string[]): Prom
   }
 
   const child = spawn("pi", piArgs, {
-    cwd: process.cwd(),
+    cwd,
     stdio: ["ignore", outFd, errFd], // the kernel redirects; this process can exit at once
     detached: true, // own process group: survives this script and the calling shell
     env: { ...process.env, PI_SUBAGENT_CHILD: "1" },
@@ -326,6 +359,96 @@ async function cmdSpawn(flags: Record<string, string>, taskArgs: string[]): Prom
     return fail(`cannot write pid file in ${runDir}: ${(err as Error).message}`, 1);
   }
   console.log(runDir);
+}
+
+// ---------------------------------------------------------------------------
+// resume
+// ---------------------------------------------------------------------------
+
+function expandTilde(p: string): string {
+  if (p === "~") return homedir();
+  if (p.startsWith("~/")) return join(homedir(), p.slice(2));
+  return p;
+}
+
+function findSessionFile(cwd: string, sessionId: string): string | null {
+  // Mirrors pi's store layout: <agentDir>/sessions/--<cwd with separators dashed>--/<ts>_<id>.jsonl
+  const agentDir = process.env.PI_CODING_AGENT_DIR
+    ? expandTilde(process.env.PI_CODING_AGENT_DIR)
+    : join(homedir(), ".pi", "agent");
+  const slug = `--${resolve(cwd).replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
+  const storeDir = join(agentDir, "sessions", slug);
+  let names: string[];
+  try {
+    names = readdirSync(storeDir);
+  } catch {
+    return null;
+  }
+  const name = names.find((n) => n.endsWith(`_${sessionId}.jsonl`));
+  return name ? join(storeDir, name) : null;
+}
+
+function sessionCwdOf(file: string): string | null {
+  for (const r of parseRecords(file)) {
+    if (r?.type === "session" && typeof r.cwd === "string") return r.cwd;
+  }
+  return null;
+}
+
+async function cmdResume(runDir: string, flags: Record<string, string>, messageArgs: string[]): Promise<void> {
+  if (flags.thinking !== undefined && !THINKING_LEVELS.includes(flags.thinking)) {
+    fail(`--thinking must be one of: ${THINKING_LEVELS.join(", ")}`, 1);
+  }
+  const message = messageArgs.filter((m) => m.length > 0);
+
+  // A live worker still owns its session; forking it now copies a moving target.
+  // Wait for it to settle or exit first. (pi also auto-retries transient errors,
+  // so an interrupted connection is rarely a reason to resume.)
+  const pidFile = join(runDir, "pid");
+  if (existsSync(pidFile)) {
+    const pid = Number.parseInt(readFileSync(pidFile, "utf8").trim(), 10);
+    if (Number.isFinite(pid) && alive(pid)) {
+      return fail(`run's process ${pid} is still alive; wait for it to settle or exit first`, 4);
+    }
+  }
+
+  const sessionId = basename(runDir); // a run dir is always named by its session id
+  let meta: { cwd?: unknown; tools?: unknown } = {};
+  const metaFile = join(runDir, "spawn.json");
+  if (existsSync(metaFile)) {
+    try {
+      meta = JSON.parse(readFileSync(metaFile, "utf8"));
+    } catch (err) {
+      return fail(`cannot parse ${metaFile}: ${(err as Error).message}`, 2);
+    }
+  }
+  const cwd = typeof meta.cwd === "string" ? meta.cwd : sessionCwdOf(join(runDir, "events.jsonl"));
+  if (!cwd) fail(`cannot determine the project of run ${runDir} (no spawn.json, no session record)`, 2);
+  const tools = flags.tools ?? (typeof meta.tools === "string" ? meta.tools : DEFAULT_TOOLS);
+
+  // The fork source must exist: pi would otherwise fork from nothing and the
+  // worker would restart context-free instead of resuming.
+  const sessionFile = findSessionFile(cwd, sessionId);
+  if (!sessionFile) fail(`session ${sessionId} not found in the store for ${cwd}; nothing to resume`, 2);
+
+  const newSessionId = randomUUID();
+  const newRunDir = join(dirname(runDir), newSessionId);
+  try {
+    mkdirSync(newRunDir);
+  } catch (err) {
+    return fail(`cannot create ${newRunDir}: ${(err as Error).message}`, 1);
+  }
+  writeSpawnJson(newRunDir, cwd, tools);
+
+  const piArgs: string[] = [
+    "--mode", "json", "-p", "--session-id", newSessionId, "--fork", sessionFile, "--tools", tools,
+  ];
+  if (flags.thinking !== undefined) piArgs.push("--thinking", flags.thinking);
+  if (flags.model !== undefined) piArgs.push("--model", flags.model);
+  if (message.some((m) => m.startsWith("-"))) piArgs.push("--"); // let a message begin with "-"
+  piArgs.push(...(message.length > 0 ? message : [DEFAULT_RESUME_MESSAGE]));
+
+  await launchWorker(newRunDir, piArgs, cwd);
 }
 
 // ---------------------------------------------------------------------------
@@ -425,6 +548,7 @@ async function cmdWait(file: string, flags: Record<string, string>, runDir: stri
       }
       if (s.status === "failed" || s.status === "aborted") {
         console.error(`pi-subagent: ${describeFailure(s)}`);
+        console.error(`pi-subagent: to continue this run's session: pi-subagent resume ${runDir}`);
         return 4;
       }
     }
@@ -438,10 +562,12 @@ async function cmdWait(file: string, flags: Record<string, string>, runDir: stri
         }
         console.error(`pi-subagent: process ${pid} exited with run status "${s.status}"`);
         reportStderr(runDir);
+        console.error(`pi-subagent: to continue this run's session: pi-subagent resume ${runDir}`);
         return 4;
       }
       console.error(`pi-subagent: process ${pid} exited before writing ${file}`);
       reportStderr(runDir);
+      console.error(`pi-subagent: to continue this run's session: pi-subagent resume ${runDir}`);
       return 4;
     }
     if (Date.now() > deadline) {
@@ -496,6 +622,15 @@ async function main(): Promise<void> {
   if (command === "spawn") {
     rejectFlags(flags, command, ["dir", "tools", "thinking", "model"]);
     await cmdSpawn(flags, positional);
+    return;
+  }
+
+  if (command === "resume") {
+    rejectFlags(flags, command, ["tools", "thinking", "model"]);
+    const [runDir, ...message] = positional;
+    if (!runDir) fail("resume needs a run directory", 1);
+    if (!existsSync(join(runDir, "events.jsonl"))) fail(`run directory ${runDir} has no events.jsonl`, 2);
+    await cmdResume(runDir, flags, message);
     return;
   }
 

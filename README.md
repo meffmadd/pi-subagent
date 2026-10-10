@@ -2,7 +2,7 @@
 
 A skill for [pi](https://github.com/earendil-works/pi-coding-agent) that spawns **subagents**: background child `pi` processes with a fresh context. They share your cwd and credentials, see none of your conversation, and your context grows only by what you read back.
 
-Use it when the legwork outweighs the answer — many files to read, big logs to sift, parallel investigations to pull. Managed by the bundled `pi-subagent` CLI (`spawn`, `state`, `steps`, `text`, `result`, `wait`).
+Use it when the legwork outweighs the answer — many files to read, big logs to sift, parallel investigations to pull. Managed by the bundled `pi-subagent` CLI (`spawn`, `resume`, `state`, `steps`, `text`, `result`, `wait`).
 
 ## Requirements
 
@@ -34,6 +34,9 @@ RUN=$(node "$CLI" spawn --tools read,grep,find,ls --thinking low \
   "Find every TODO in this repo. <worker contract>")
 
 node "$CLI" wait "$RUN"   # blocks until settled, prints the final summary
+
+RUN2=$(node "$CLI" resume "$RUN" "Now write the tests.")  # fork the session into a new background run
+node "$CLI" wait "$RUN2"
 ```
 
 The agent-facing contract — spawn, inspect, follow-ups, guardrails — lives in [`skills/pi-subagent/SKILL.md`](skills/pi-subagent/SKILL.md). Run `node "$CLI" --help` for the full CLI reference.

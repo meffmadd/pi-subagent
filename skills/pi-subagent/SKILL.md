@@ -29,13 +29,13 @@ pi -p --tools read,grep,find,ls "TASK. <worker contract>"
 RUN=$(node "$CLI" spawn --tools read,grep,find,ls --thinking low "TASK. <worker contract>")
 ```
 
-`spawn` prints the run dir `/tmp/pi-subagents/<session-id>` once the worker process starts, without waiting for its task to finish. It contains `events.jsonl`, `pid`, and `stderr.log`. The worker's session persists in the project's session store; the run dir is throwaway. For long tasks, pass `"@/path/to/task.md"` instead of task text. For pi flags `spawn` does not expose, run `pi --mode json -p <flags> "TASK"` directly.
+`spawn` prints the run dir `/tmp/pi-subagents/<session-id>` once the worker process starts, without waiting for its task to finish. It contains `events.jsonl`, `pid`, `stderr.log`, and `spawn.json` (project cwd and tools, for `resume`). The worker's session persists in the project's session store; the run dir is throwaway. For long tasks, pass `"@/path/to/task.md"` instead of task text. For pi flags `spawn` does not expose, run `pi --mode json -p <flags> "TASK"` directly.
 
 Parallel workers: one spawn each — each gets its own session — then wait on each in turn.
 
 ### Inspect and collect
 
-Pass the run directory printed by `spawn` to every inspection command.
+Pass the run directory printed by `spawn` or `resume` to every inspection command.
 
 | Command | Prints | Exit |
 |---|---|---|
@@ -47,16 +47,26 @@ Pass the run directory printed by `spawn` to every inspection command.
 
 `wait` reads `$RUN/pid` automatically; `--timeout S` (default 600) and `--interval S` tune it. A worker that dies unsettled surfaces its stderr in `wait`'s error.
 
-### Follow-ups
+### Follow-ups and resumes
 
-Continue the worker's session instead of respawning:
+Continue the worker's session instead of respawning. For a quick interactive follow-up, run it in the foreground:
 
 ```bash
 pi -p --session "$(basename "$RUN")" "Follow-up question. <worker contract>"
 ```
+
+For a dead worker, or a follow-up that should run untended, `resume` forks the session into a fresh background run and prints its run dir:
+
+```bash
+RUN2=$(node "$CLI" resume "$RUN" "Verify the fix, then report.")
+node "$CLI" wait "$RUN2"
+```
+
+`resume` keeps the session's context, model, and reasoning level; `--tools`, `--model`, and `--thinking` override them. Without a message, the worker is told to resume where it stopped. It refuses while the run's process is alive and fails if the persisted session is gone.
 
 ## Guardrails
 
 - Each subagent is a full agent run: real tokens and cost. Spend it where the legwork is real.
 - `spawn` marks the child with `$PI_SUBAGENT_CHILD`; when it is set in your environment, you are already a subagent: do the work yourself and end with the summary the contract asked for.
 - Stop a runaway with `kill "$(cat "$RUN/pid")"`.
+- A connection error is not a dead worker: pi auto-retries transient errors (3 attempts). `wait` for the process to exit before resuming; `resume` refuses while it is alive.

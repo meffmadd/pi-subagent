@@ -6,7 +6,7 @@ An agent skill collection. Human-facing install and usage docs live in `README.m
 
 Distributable skills live in `skills/<name>/`, each with a `SKILL.md`. Keep each directory to what an installing agent needs; tests and dev tooling live outside it, in `test/`.
 
-`skills/pi-subagent/SKILL.md` resolves `scripts/pi-subagent.ts` relative to itself; keep that path stable. `skills/simplification-review/` is instructions-only.
+`skills/pi-subagent/SKILL.md` resolves `scripts/pi-subagent.ts` relative to itself; keep that path stable. `skills/simplification-review/` is instructions-only. `skills/visual-plan/` ships its validated example next to `SKILL.md`; the skill points at it.
 
 ## Dev loop
 

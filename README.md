@@ -6,6 +6,7 @@ My personal skills repository.
 | --- | --- |
 | [pi-subagent](skills/pi-subagent/SKILL.md) | Spawn and manage background `pi` subagents with fresh contexts. |
 | [simplification-review](skills/simplification-review/SKILL.md) | Rank evidence-backed opportunities to remove superfluous abstractions, mechanisms, and optional features. |
+| [visual-plan](skills/visual-plan/SKILL.md) | Turn a spec or issue into a collapsible file-tree implementation plan with concise pseudocode diffs. |
 
 ## Install
 
@@ -54,6 +55,17 @@ Ask your agent to use the skill, or invoke it directly in pi:
 ```
 
 The skill traces workflows, applies a deletion test, and ranks supported simplification options by superfluousness. It distinguishes refactors from interface changes, feature cuts, and guarantee reductions. It reviews only unless you request implementation.
+
+### visual-plan
+
+Ask your agent to use the skill, or invoke it directly in pi:
+
+```text
+/skill:visual-plan https://github.com/owner/repo/issues/2
+/skill:visual-plan <inline implementation request>
+```
+
+The skill turns a spec, issue, or prompt into one collapsible Markdown file tree: directories nest by indentation, each file has a five-to-seven-word headline, and a short pseudocode diff sits under an unlabeled disclosure arrow. It writes the plan to the temp directory and offers to open it; viewers that fold `<details>` hide the diffs, others show the whole tree.
 
 ## Development
 

@@ -1,12 +1,12 @@
 # AGENTS.md
 
-A pi skill: `skills/pi-subagent/` bundles `SKILL.md` and a CLI (`scripts/pi-subagent.ts`) that spawns background `pi` subagents. Human-facing install and usage docs live in `README.md`.
+An agent skill collection. Human-facing install and usage docs live in `README.md`.
 
 ## What ships
 
-`npx skills add` and `pi install` copy `skills/pi-subagent/` verbatim into users' skill directories. Keep that directory to what an installing agent needs — `SKILL.md` and the script. Tests and dev tooling live outside it, in `test/`.
+Distributable skills live in `skills/<name>/`, each with a `SKILL.md`. Keep each directory to what an installing agent needs; tests and dev tooling live outside it, in `test/`.
 
-`SKILL.md` resolves `scripts/pi-subagent.ts` relative to itself; keep that path stable.
+`skills/pi-subagent/SKILL.md` resolves `scripts/pi-subagent.ts` relative to itself; keep that path stable. `skills/simplification-review/` is instructions-only.
 
 ## Dev loop
 

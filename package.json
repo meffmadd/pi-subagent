@@ -1,7 +1,7 @@
 {
-  "name": "pi-subagent",
+  "name": "@meffmadd/skills",
   "version": "0.1.0",
-  "description": "Spawn Pi subagents — background child pi processes with a fresh context",
+  "description": "Agent skills for code review and delegation, including Pi subagents",
   "type": "module",
   "keywords": ["pi-package", "agent-skills"],
   "files": ["skills/"],
